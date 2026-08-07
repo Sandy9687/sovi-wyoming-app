@@ -3,4 +3,4 @@ geopandas
 pandas
 plotly
 shapely
-fiona
+pyogrio
