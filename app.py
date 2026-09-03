@@ -109,6 +109,64 @@ VARIABLE_LABELS = {
     "PHYS_PC": "Physicians per 100,000 population",
 }
 
+# ------------------------------------------
+# Hardcoded variable lists per configuration. This is more reliable than
+# deriving from GeoJSON columns, since the exported files only carry the
+# final PCA component scores and SoVI outputs, not the raw input variables.
+# ------------------------------------------
+CONFIG_VARIABLES = {
+    ("Tract", "All Variables Method"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_EXTRACT", "Q_TRANS", "Q_SERV", "FEM_LBR", "LBR_FORCE",
+        "POP_CHG", "HOU_DEN", "NO_HS", "Q_GRP_QTR", "Q_POV", "Q_FEMALE", "HLTH_INS",
+        "NO_VEH", "PERCAP", "MED_VAL", "MED_RENT", "PCT_URBAN", "PRED_BRATE",
+        "PRED_PCT_GOP", "PRED_SS_PC", "PRED_NURS_PC", "PRED_PHYS_PC", "PRED_GDP_PC",
+        "PRED_FARM_VAL",
+    ],
+    ("Tract", "Predicted Variables Removed"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_EXTRACT", "Q_TRANS", "Q_SERV", "FEM_LBR", "LBR_FORCE",
+        "POP_CHG", "HOU_DEN", "NO_HS", "Q_FHH", "Q_GRP_QTR", "Q_POV", "Q_FEMALE",
+        "HLTH_INS", "NO_VEH", "PERCAP", "MED_VAL", "MED_RENT", "PCT_URBAN",
+    ],
+    ("Tract", "Urban Region Vulnerability"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_TRANS", "Q_SERV", "FEM_LBR", "LBR_FORCE", "POP_CHG",
+        "HOU_DEN", "NO_HS", "Q_GRP_QTR", "Q_POV", "Q_FEMALE", "HLTH_INS", "NO_VEH",
+        "PERCAP", "MED_VAL", "MED_RENT", "PCT_URBAN", "PRED_BRATE", "PRED_PCT_GOP",
+        "PRED_SS_PC", "PRED_NURS_PC", "PRED_PHYS_PC", "PRED_GDP_PC",
+    ],
+    ("Tract", "Rural Region Vulnerability"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_EXTRACT", "Q_TRANS", "FEM_LBR", "LBR_FORCE", "POP_CHG",
+        "NO_HS", "Q_GRP_QTR", "Q_POV", "Q_FEMALE", "HLTH_INS", "NO_VEH", "PERCAP",
+        "MED_VAL", "MED_RENT", "PRED_BRATE", "PRED_PCT_GOP", "PRED_SS_PC",
+        "PRED_NURS_PC", "PRED_PHYS_PC", "PRED_PCT_FARM", "PRED_FARM_VAL",
+    ],
+    ("County", "All Variables Method"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_EXTRACT", "Q_TRANS", "Q_SERV", "FEM_LBR", "LBR_FORCE",
+        "POP_CHG", "HOU_DEN", "NO_HS", "Q_FHH", "Q_GRP_QTR", "Q_POV", "Q_FEMALE",
+        "HLTH_INS", "NO_VEH", "PERCAP", "HH_ABV_MED", "MED_VAL", "MED_RENT",
+        "PCT_URBAN", "PCT_GOP", "SS_PC", "DEBT_RATIO", "GDP_PC", "PCT_FARM",
+        "FARM_VAL", "NURS_PC", "PHYS_PC",
+    ],
+    ("County", "Urban Region Vulnerability"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_TRANS", "Q_SERV", "FEM_LBR", "LBR_FORCE", "POP_CHG",
+        "HOU_DEN", "NO_HS", "Q_FHH", "Q_GRP_QTR", "Q_POV", "Q_FEMALE", "HLTH_INS",
+        "NO_VEH", "PERCAP", "HH_ABV_MED", "MED_VAL", "MED_RENT", "PCT_URBAN",
+        "PCT_GOP", "SS_PC", "DEBT_RATIO", "GDP_PC", "NURS_PC", "PHYS_PC",
+    ],
+    ("County", "Rural Region Vulnerability"): [
+        "ESL_PCT", "MED_AGE", "AGE_DEP", "Q_MINOR", "AVG_HH_SZ", "Q_RENTER", "Q_MOBILE",
+        "HOSP_PC", "Q_UNEMP", "Q_EXTRACT", "Q_TRANS", "FEM_LBR", "LBR_FORCE", "POP_CHG",
+        "NO_HS", "Q_FHH", "Q_GRP_QTR", "Q_POV", "Q_FEMALE", "HLTH_INS", "NO_VEH",
+        "PERCAP", "HH_ABV_MED", "MED_VAL", "MED_RENT", "PCT_GOP", "SS_PC",
+        "DEBT_RATIO", "GDP_PC", "PCT_FARM", "FARM_VAL", "NURS_PC", "PHYS_PC",
+    ],
+}
+
 @st.cache_data
 def load_geojson(path):
     gdf = gpd.read_file(path)
@@ -116,11 +174,6 @@ def load_geojson(path):
     if gdf.crs is None or gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
     return gdf
-
-def get_input_variables(gdf):
-    """Return the list of input variable column names used for this configuration."""
-    cols = [c for c in gdf.columns if c not in NON_INPUT_COLS]
-    return sorted(cols)
 
 # ==========================================
 # SIDEBAR CONTROLS
@@ -166,7 +219,7 @@ with col_map:
             locations=gdf.index,
             color="SoVI",
             color_continuous_scale="RdYlGn_r",
-            mapbox_style="carto-positron",
+            mapbox_style="open-street-map",
             center={"lat": 43.0, "lon": -107.5},
             zoom=5.3,
             opacity=0.75,
@@ -184,7 +237,7 @@ with col_map:
             color="SoVI_class",
             category_orders={"SoVI_class": ["< -1 SD", "-1 to -0.5 SD", "-0.5 to 0.5 SD", "0.5 to 1 SD", "> 1 SD"]},
             color_discrete_sequence=px.colors.diverging.RdYlGn[::-1],
-            mapbox_style="carto-positron",
+            mapbox_style="open-street-map",
             center={"lat": 43.0, "lon": -107.5},
             zoom=5.3,
             opacity=0.75,
@@ -209,7 +262,7 @@ with col_map:
             color="cluster",
             category_orders={"cluster": list(cluster_colors.keys())},
             color_discrete_map=cluster_colors,
-            mapbox_style="carto-positron",
+            mapbox_style="open-street-map",
             center={"lat": 43.0, "lon": -107.5},
             zoom=5.3,
             opacity=0.75,
@@ -228,7 +281,7 @@ with col_table:
 # ==========================================
 # VARIABLES USED IN THIS CONFIGURATION
 # ==========================================
-input_vars = get_input_variables(gdf)
+input_vars = CONFIG_VARIABLES.get((geography, variable_set), [])
 
 with st.expander(f"Variables used in the {variable_set} model ({len(input_vars)} variables)", expanded=False):
     var_rows = [
