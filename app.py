@@ -14,8 +14,9 @@ st.set_page_config(
 st.title("Wyoming Social Vulnerability Index (SoVI) Explorer")
 st.markdown(
     "Interactive viewer for tract- and county-level Social Vulnerability Index "
-    "results, comparing a reduced (few-variable) model against the "
-    "All Variables Method."
+    "results across multiple model configurations: All Variables, Urban Region "
+    "Vulnerability, Rural Region Vulnerability, and (tract-level only) Predicted "
+    "Variables Removed."
 )
 
 # ==========================================
@@ -24,9 +25,10 @@ st.markdown(
 DATA_DIR = "data/"
 
 FILE_MAP = {
-    ("Tract", "Few Variables"):        DATA_DIR + "tract_few_vars.geojson",
     ("Tract", "All Variables Method"): DATA_DIR + "tract_all_vars.geojson",
-    ("County", "Few Variables"):       DATA_DIR + "county_few_vars.geojson",
+    ("Tract", "Predicted Variables Removed"): DATA_DIR + "tract_predvars_removed.geojson",
+    ("Tract", "Urban Region Vulnerability"): DATA_DIR + "tract_urban.geojson",
+    ("Tract", "Rural Region Vulnerability"): DATA_DIR + "tract_rural.geojson",
     ("County", "All Variables Method"): DATA_DIR + "county_all_vars.geojson",
     ("County", "Urban Region Vulnerability"): DATA_DIR + "county_urban.geojson",
     ("County", "Rural Region Vulnerability"): DATA_DIR + "county_rural.geojson",
@@ -34,8 +36,9 @@ FILE_MAP = {
 
 # Which "Variable Configuration" options are valid for each geography level.
 GEOGRAPHY_CONFIGS = {
-    "Tract":  ["Few Variables", "All Variables Method"],
-    "County": ["Few Variables", "All Variables Method", "Urban Region Vulnerability", "Rural Region Vulnerability"],
+    "Tract":  ["All Variables Method", "Predicted Variables Removed",
+               "Urban Region Vulnerability", "Rural Region Vulnerability"],
+    "County": ["All Variables Method", "Urban Region Vulnerability", "Rural Region Vulnerability"],
 }
 
 # Columns that are identifiers, geometry, or computed OUTPUTS rather than
