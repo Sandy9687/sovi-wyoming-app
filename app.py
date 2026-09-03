@@ -14,8 +14,8 @@ st.set_page_config(
 st.title("Wyoming Social Vulnerability Index (SoVI) Explorer")
 st.markdown(
     "Interactive viewer for tract- and county-level Social Vulnerability Index "
-    "results, comparing a reduced (few-variable) model against a full "
-    "(all-variable) model."
+    "results, comparing a reduced (few-variable) model against the "
+    "All Variables Method."
 )
 
 # ==========================================
@@ -24,10 +24,86 @@ st.markdown(
 DATA_DIR = "data/"
 
 FILE_MAP = {
-    ("Tract", "Few Variables"):  DATA_DIR + "tract_few_vars.geojson",
-    ("Tract", "All Variables"):  DATA_DIR + "tract_all_vars.geojson",
-    ("County", "Few Variables"): DATA_DIR + "county_few_vars.geojson",
-    ("County", "All Variables"): DATA_DIR + "county_all_vars.geojson",
+    ("Tract", "Few Variables"):        DATA_DIR + "tract_few_vars.geojson",
+    ("Tract", "All Variables Method"): DATA_DIR + "tract_all_vars.geojson",
+    ("County", "Few Variables"):       DATA_DIR + "county_few_vars.geojson",
+    ("County", "All Variables Method"): DATA_DIR + "county_all_vars.geojson",
+    ("County", "Urban Region Vulnerability"): DATA_DIR + "county_urban.geojson",
+    ("County", "Rural Region Vulnerability"): DATA_DIR + "county_rural.geojson",
+}
+
+# Which "Variable Configuration" options are valid for each geography level.
+GEOGRAPHY_CONFIGS = {
+    "Tract":  ["Few Variables", "All Variables Method"],
+    "County": ["Few Variables", "All Variables Method", "Urban Region Vulnerability", "Rural Region Vulnerability"],
+}
+
+# Columns that are identifiers, geometry, or computed OUTPUTS rather than
+# input variables that went into the PCA/SoVI calculation. Everything else
+# in a GeoJSON's columns is treated as an input variable for the variable list.
+NON_INPUT_COLS = {
+    "GISJOIN", "NAME", "NAME_E", "NAMELSAD", "COUNTY", "STATEFP", "COUNTYFP",
+    "TRACTCE", "GEOID", "GEOIDFQ", "MTFCC", "FUNCSTAT", "ALAND", "AWATER",
+    "INTPTLAT", "INTPTLON", "Area_miles", "geometry",
+    "SoVI", "SoVI_class", "cluster", "Ii", "P.Ii", "lag_sovi",
+}
+NON_INPUT_COLS |= {f"FAC_{i}" for i in range(1, 15)}
+NON_INPUT_COLS |= {f"RC{i}" for i in range(1, 15)}
+
+# Human-readable labels for known abbreviated variable codes.
+# Any column not in this dict is shown using its raw column name as a fallback.
+VARIABLE_LABELS = {
+    "ESL_PCT": "% Limited English proficiency",
+    "MED_AGE": "Median age",
+    "AGE_DEP": "Age dependency ratio",
+    "Q_MINOR": "% Minority population",
+    "AVG_HH_SZ": "Average household size",
+    "Q_RENTER": "% Renter-occupied housing",
+    "Q_MOBILE": "% Mobile homes",
+    "HOSP_PC": "Hospitals per capita",
+    "Q_UNEMP": "% Unemployed",
+    "Q_EXTRACT": "% Employment in extractive industries",
+    "Q_TRANS": "Commute time / transport burden",
+    "Q_SERV": "% Employment in service occupations",
+    "FEM_LBR": "% Females in labor force",
+    "LBR_FORCE": "% Total labor force participation",
+    "POP_CHG": "Population change",
+    "HOU_DEN": "Housing unit density",
+    "NO_HS": "% Without high school education",
+    "Q_FHH": "% Female-headed households",
+    "Q_GRP_QTR": "% In group quarters",
+    "Q_POV": "% In poverty",
+    "Q_FEMALE": "% Female population",
+    "HLTH_INS": "% With health insurance",
+    "NO_VEH": "% Households with no vehicle",
+    "PERCAP": "Per capita income",
+    "HH_ABV_MED": "% Households above median income",
+    "MED_VAL": "Median home value",
+    "MED_RENT": "Median gross rent",
+    "PCT_URBAN": "% Urban population",
+    "PRED_BRATE": "Birth rate",
+    "PRED_PCT_GOP": "% Voting for governing party",
+    "PRED_MFG_DEN": "Manufacturing density",
+    "PRED_SS_PC": "Social Security recipients per capita",
+    "PRED_DEBT_RATIO": "Municipal debt ratio",
+    "PRED_DEBT_REV": "Municipal debt-to-revenue ratio",
+    "PRED_PERMIT_DEN": "Housing permit density",
+    "PRED_NURS_PC": "Nurses per capita",
+    "PRED_PHYS_PC": "Physicians per capita",
+    "PRED_GDP_PC": "GDP per capita",
+    "PRED_COM_DEN": "Commercial density",
+    "PRED_PCT_FARM": "% In farming",
+    "PRED_FARM_VAL": "Farm production value",
+    # County-level Mountain Division variables (directly measured, not modeled -
+    # no PRED_ prefix, since these come straight from BEA/USDA/HRSA/SSA/Census sources)
+    "PCT_GOP": "% Voting for governing party",
+    "SS_PC": "Social Security recipients per capita",
+    "DEBT_RATIO": "Municipal debt ratio (liabilities/assets)",
+    "GDP_PC": "GDP per capita",
+    "PCT_FARM": "% Land in farms",
+    "FARM_VAL": "Farm production & land value per sq. mile",
+    "NURS_PC": "% Population in nursing facilities",
+    "PHYS_PC": "Physicians per 100,000 population",
 }
 
 @st.cache_data
@@ -38,13 +114,18 @@ def load_geojson(path):
         gdf = gdf.to_crs(epsg=4326)
     return gdf
 
+def get_input_variables(gdf):
+    """Return the list of input variable column names used for this configuration."""
+    cols = [c for c in gdf.columns if c not in NON_INPUT_COLS]
+    return sorted(cols)
+
 # ==========================================
 # SIDEBAR CONTROLS
 # ==========================================
 st.sidebar.header("Configuration")
 
 geography = st.sidebar.selectbox("Geography Level", ["Tract", "County"])
-variable_set = st.sidebar.selectbox("Variable Configuration", ["Few Variables", "All Variables"])
+variable_set = st.sidebar.selectbox("Variable Configuration", GEOGRAPHY_CONFIGS[geography])
 
 output_view = st.sidebar.selectbox(
     "Output View",
@@ -142,6 +223,18 @@ with col_table:
     st.dataframe(table_df, use_container_width=True, height=650)
 
 # ==========================================
+# VARIABLES USED IN THIS CONFIGURATION
+# ==========================================
+input_vars = get_input_variables(gdf)
+
+with st.expander(f"Variables used in the {variable_set} model ({len(input_vars)} variables)", expanded=False):
+    var_rows = [
+        {"Variable Code": v, "Description": VARIABLE_LABELS.get(v, "—")}
+        for v in input_vars
+    ]
+    st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
+
+# ==========================================
 # SUMMARY STATS
 # ==========================================
 st.markdown("---")
@@ -161,6 +254,13 @@ if "SoVI_class" in gdf.columns:
     st.bar_chart(class_counts)
 
 st.markdown("---")
+if geography == "County" and variable_set != "Few Variables":
+    st.caption(
+        "County-level PCA was computed across all 281 counties of the Mountain "
+        "Census Division (AZ, CO, ID, MT, NV, NM, UT, WY) to provide adequate "
+        "statistical power, then filtered to Wyoming's 23 counties for display, "
+        "consistent with standard SoVI methodology for small states."
+    )
 st.caption(
     "Data: Wyoming SoVI analysis, tract and county level, few- and "
     "all-variable model configurations. Local Moran's I (LISA) used to "
