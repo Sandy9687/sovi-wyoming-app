@@ -2,6 +2,9 @@ import streamlit as st
 import geopandas as gpd
 import pandas as pd
 import plotly.express as px
+import folium
+from streamlit_folium import st_folium
+import branca.colormap as cm
 
 # ==========================================
 # PAGE CONFIG
@@ -40,18 +43,6 @@ GEOGRAPHY_CONFIGS = {
                "Urban Region Vulnerability", "Rural Region Vulnerability"],
     "County": ["All Variables Method", "Urban Region Vulnerability", "Rural Region Vulnerability"],
 }
-
-# Columns that are identifiers, geometry, or computed OUTPUTS rather than
-# input variables that went into the PCA/SoVI calculation. Everything else
-# in a GeoJSON's columns is treated as an input variable for the variable list.
-NON_INPUT_COLS = {
-    "GISJOIN", "NAME", "NAME_E", "NAMELSAD", "COUNTY", "STATEFP", "COUNTYFP",
-    "TRACTCE", "GEOID", "GEOIDFQ", "MTFCC", "FUNCSTAT", "ALAND", "AWATER",
-    "INTPTLAT", "INTPTLON", "Area_miles", "geometry",
-    "SoVI", "SoVI_class", "cluster", "Ii", "P.Ii", "lag_sovi",
-}
-NON_INPUT_COLS |= {f"FAC_{i}" for i in range(1, 15)}
-NON_INPUT_COLS |= {f"RC{i}" for i in range(1, 15)}
 
 # Human-readable labels for known abbreviated variable codes.
 # Any column not in this dict is shown using its raw column name as a fallback.
@@ -289,6 +280,116 @@ with st.expander(f"Variables used in the {variable_set} model ({len(input_vars)}
         for v in input_vars
     ]
     st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
+
+# ==========================================
+# INDIVIDUAL VARIABLE EXPLORER
+# Lets the user pick any single input variable and see its raw values,
+# either alone or layered on top of the SoVI choropleth with a toggle.
+# ==========================================
+st.markdown("---")
+st.subheader("Individual Variable Explorer")
+st.markdown(
+    "Explore any single variable's raw values by tract/county, and optionally "
+    "overlay it on top of the SoVI map to see how that variable relates to the "
+    "overall vulnerability score. Use the layer control (top right of the map) "
+    "to toggle each layer on or off."
+)
+
+available_vars = [v for v in input_vars if v in gdf.columns]
+missing_vars = [v for v in input_vars if v not in gdf.columns]
+
+if missing_vars:
+    st.info(
+        f"{len(missing_vars)} of {len(input_vars)} variables aren't in this file yet "
+        f"(raw values need to be re-exported from R — see the app's data pipeline). "
+        f"Showing the {len(available_vars)} that are available."
+    )
+
+if not available_vars:
+    st.warning(
+        "No raw variable values are available in this GeoJSON yet. "
+        "Re-export the data from R with the original variable columns included "
+        "to enable this feature."
+    )
+else:
+    selected_var = st.selectbox(
+        "Select a variable to explore",
+        available_vars,
+        format_func=lambda v: f"{VARIABLE_LABELS.get(v, v)} ({v})"
+    )
+
+    show_sovi_layer = st.checkbox("Show SoVI Score layer", value=True)
+    show_var_layer = st.checkbox(f"Show {VARIABLE_LABELS.get(selected_var, selected_var)} layer", value=True)
+
+    # Build a Folium map with genuinely toggleable layers via LayerControl
+    center_lat, center_lon = 43.0, -107.5
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles="OpenStreetMap")
+
+    gdf_json = gdf.reset_index().to_json()
+
+    # --- SoVI layer (main color scale) ---
+    if show_sovi_layer:
+        sovi_colormap = cm.LinearColormap(
+            colors=["#1a9850", "#ffffbf", "#d73027"],  # green (low) -> yellow -> red (high)
+            vmin=gdf["SoVI"].min(),
+            vmax=gdf["SoVI"].max(),
+            caption="SoVI Score"
+        )
+        folium.GeoJson(
+            gdf_json,
+            name="SoVI Score",
+            style_function=lambda feature, cmap=sovi_colormap: {
+                "fillColor": cmap(feature["properties"]["SoVI"]),
+                "color": "black",
+                "weight": 0.5,
+                "fillOpacity": 0.75,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=[name_field, "SoVI", "SoVI_class"],
+                aliases=["Name:", "SoVI Score:", "SoVI Class:"],
+                localize=True,
+            ),
+            show=True,
+        ).add_to(m)
+        sovi_colormap.add_to(m)
+
+    # --- Individual variable layer (lighter color scale, so it reads as a secondary layer) ---
+    if show_var_layer:
+        var_colormap = cm.LinearColormap(
+            colors=["#f7fbff", "#6baed6", "#08306b"],  # light blue (low) -> dark blue (high), lighter overall than SoVI's red/green
+            vmin=gdf[selected_var].min(),
+            vmax=gdf[selected_var].max(),
+            caption=VARIABLE_LABELS.get(selected_var, selected_var)
+        )
+        folium.GeoJson(
+            gdf_json,
+            name=f"{VARIABLE_LABELS.get(selected_var, selected_var)} ({selected_var})",
+            style_function=lambda feature, cmap=var_colormap, var=selected_var: {
+                "fillColor": cmap(feature["properties"][var]),
+                "color": "#555555",
+                "weight": 0.5,
+                "fillOpacity": 0.55,  # lighter/more transparent than the SoVI layer
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=[name_field, selected_var, "SoVI"],
+                aliases=["Name:", f"{VARIABLE_LABELS.get(selected_var, selected_var)}:", "SoVI Score:"],
+                localize=True,
+            ),
+            show=True,
+        ).add_to(m)
+        var_colormap.add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+
+    st_folium(m, use_container_width=True, height=600)
+
+    # Quick summary of the selected variable alongside SoVI, for direct comparison
+    st.markdown(f"**{VARIABLE_LABELS.get(selected_var, selected_var)} vs. SoVI — top 10 tracts/counties by this variable**")
+    compare_cols = [c for c in [name_field, selected_var, "SoVI", "SoVI_class"] if c in gdf.columns]
+    st.dataframe(
+        gdf[compare_cols].sort_values(selected_var, ascending=False).head(10).reset_index(drop=True),
+        use_container_width=True, hide_index=True
+    )
 
 # ==========================================
 # SUMMARY STATS
