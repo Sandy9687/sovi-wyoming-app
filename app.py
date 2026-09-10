@@ -289,10 +289,11 @@ with st.expander(f"Variables used in the {variable_set} model ({len(input_vars)}
 st.markdown("---")
 st.subheader("Individual Variable Explorer")
 st.markdown(
-    "Explore any single variable's raw values by tract/county, and optionally "
-    "overlay it on top of the SoVI map to see how that variable relates to the "
-    "overall vulnerability score. Use the layer control (top right of the map) "
-    "to toggle each layer on or off."
+    f"Explore any single variable's raw values by tract/county, and optionally "
+    f"overlay it on top of the currently selected **{output_view}** map (chosen "
+    f"in the Output View dropdown above) to see how that variable relates to "
+    f"vulnerability. Use the layer control (top right of the map) to toggle "
+    f"each layer on or off."
 )
 
 available_vars = [v for v in input_vars if v in gdf.columns]
@@ -318,7 +319,7 @@ else:
         format_func=lambda v: f"{VARIABLE_LABELS.get(v, v)} ({v})"
     )
 
-    show_sovi_layer = st.checkbox("Show SoVI Score layer", value=True)
+    show_sovi_layer = st.checkbox(f"Show {output_view} layer", value=True)
     show_var_layer = st.checkbox(f"Show {VARIABLE_LABELS.get(selected_var, selected_var)} layer", value=True)
 
     # Build a Folium map with genuinely toggleable layers via LayerControl
@@ -327,31 +328,60 @@ else:
 
     gdf_json = gdf.reset_index().to_json()
 
-    # --- SoVI layer (main color scale) ---
+    # --- Base layer: follows whichever Output View is currently selected above ---
     if show_sovi_layer:
-        sovi_colormap = cm.LinearColormap(
-            colors=["#1a9850", "#ffffbf", "#d73027"],  # green (low) -> yellow -> red (high)
-            vmin=gdf["SoVI"].min(),
-            vmax=gdf["SoVI"].max(),
-            caption="SoVI Score"
-        )
+        if output_view == "SoVI Score":
+            base_colormap = cm.LinearColormap(
+                colors=["#1a9850", "#ffffbf", "#d73027"],  # green (low) -> yellow -> red (high)
+                vmin=gdf["SoVI"].min(),
+                vmax=gdf["SoVI"].max(),
+                caption="SoVI Score"
+            )
+            style_fn = lambda feature, cmap=base_colormap: {
+                "fillColor": cmap(feature["properties"]["SoVI"]),
+                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+            }
+            base_layer_name = "SoVI Score"
+
+        elif output_view == "SoVI Class":
+            class_colors = {
+                "< -1 SD": "#1a9850", "-1 to -0.5 SD": "#a6d96a", "-0.5 to 0.5 SD": "#ffffbf",
+                "0.5 to 1 SD": "#fdae61", "> 1 SD": "#d73027",
+            }
+            style_fn = lambda feature: {
+                "fillColor": class_colors.get(feature["properties"].get("SoVI_class"), "#cccccc"),
+                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+            }
+            base_layer_name = "SoVI Class"
+
+        else:  # LISA Cluster
+            cluster_colors = {
+                "High-High": "#d73027", "Low-Low": "#4575b4", "High-Low": "#fee090",
+                "Low-High": "#91bfdb", "Not Significant": "#cccccc",
+            }
+            style_fn = lambda feature: {
+                "fillColor": cluster_colors.get(feature["properties"].get("cluster"), "#cccccc"),
+                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+            }
+            base_layer_name = "LISA Cluster"
+
         folium.GeoJson(
             gdf_json,
-            name="SoVI Score",
-            style_function=lambda feature, cmap=sovi_colormap: {
-                "fillColor": cmap(feature["properties"]["SoVI"]),
-                "color": "black",
-                "weight": 0.5,
-                "fillOpacity": 0.75,
-            },
+            name=base_layer_name,
+            style_function=style_fn,
             tooltip=folium.GeoJsonTooltip(
-                fields=[name_field, "SoVI", "SoVI_class"],
-                aliases=["Name:", "SoVI Score:", "SoVI Class:"],
+                fields=[f for f in [name_field, "SoVI", "SoVI_class", "cluster"] if f in gdf.columns],
+                aliases=[a for f, a in zip(
+                    [name_field, "SoVI", "SoVI_class", "cluster"],
+                    ["Name:", "SoVI Score:", "SoVI Class:", "LISA Cluster:"]
+                ) if f in gdf.columns],
                 localize=True,
             ),
             show=True,
         ).add_to(m)
-        sovi_colormap.add_to(m)
+
+        if output_view == "SoVI Score":
+            base_colormap.add_to(m)
 
     # --- Individual variable layer (lighter color scale, so it reads as a secondary layer) ---
     if show_var_layer:
