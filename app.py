@@ -174,6 +174,12 @@ def load_geojson(path):
         gdf = gdf.to_crs(epsg=4326)
     return gdf
 
+@st.cache_data
+def gdf_to_geojson_str(path, _gdf):
+    """Cache the expensive GeoDataFrame -> GeoJSON string conversion.
+    Keyed on file path so it's computed once per file, not once per rerun."""
+    return _gdf.reset_index().to_json()
+
 # ==========================================
 # SIDEBAR CONTROLS
 # ==========================================
@@ -330,104 +336,107 @@ else:
     show_sovi_layer = st.checkbox(f"Show {output_view} layer", value=True)
     show_var_layer = st.checkbox(f"Show {VARIABLE_LABELS.get(selected_var, selected_var)} layer", value=True)
 
-    # Build a Folium map with genuinely toggleable layers via LayerControl
-    center_lat, center_lon = 43.0, -107.5
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles="OpenStreetMap")
+    load_explorer_map = st.button("Load Variable Explorer Map", key="load_explorer")
 
-    gdf_json = gdf.reset_index().to_json()
+    if load_explorer_map:
+        # Build a Folium map with genuinely toggleable layers via LayerControl
+        center_lat, center_lon = 43.0, -107.5
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles="OpenStreetMap")
 
-    # --- Base layer: follows whichever Output View is currently selected above ---
-    if show_sovi_layer:
-        if output_view == "SoVI Score":
-            base_colormap = cm.LinearColormap(
-                colors=["#1a9850", "#ffffbf", "#d73027"],  # green (low) -> yellow -> red (high)
-                vmin=gdf["SoVI"].min(),
-                vmax=gdf["SoVI"].max(),
-                caption="SoVI Score"
+        gdf_json = gdf_to_geojson_str(selected_path, gdf)
+
+        # --- Base layer: follows whichever Output View is currently selected above ---
+        if show_sovi_layer:
+            if output_view == "SoVI Score":
+                base_colormap = cm.LinearColormap(
+                    colors=["#1a9850", "#ffffbf", "#d73027"],  # green (low) -> yellow -> red (high)
+                    vmin=gdf["SoVI"].min(),
+                    vmax=gdf["SoVI"].max(),
+                    caption="SoVI Score"
+                )
+                style_fn = lambda feature, cmap=base_colormap: {
+                    "fillColor": cmap(feature["properties"]["SoVI"]),
+                    "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+                }
+                base_layer_name = "SoVI Score"
+
+            elif output_view == "SoVI Class":
+                class_colors = {
+                    "< -1 SD": "#1a9850", "-1 to -0.5 SD": "#a6d96a", "-0.5 to 0.5 SD": "#ffffbf",
+                    "0.5 to 1 SD": "#fdae61", "> 1 SD": "#d73027",
+                }
+                style_fn = lambda feature: {
+                    "fillColor": class_colors.get(feature["properties"].get("SoVI_class"), "#cccccc"),
+                    "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+                }
+                base_layer_name = "SoVI Class"
+
+            else:  # LISA Cluster
+                cluster_colors = {
+                    "High-High": "#d73027", "Low-Low": "#4575b4", "High-Low": "#fee090",
+                    "Low-High": "#91bfdb", "Not Significant": "#cccccc",
+                }
+                style_fn = lambda feature: {
+                    "fillColor": cluster_colors.get(feature["properties"].get("cluster"), "#cccccc"),
+                    "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+                }
+                base_layer_name = "LISA Cluster"
+
+            folium.GeoJson(
+                gdf_json,
+                name=base_layer_name,
+                style_function=style_fn,
+                tooltip=folium.GeoJsonTooltip(
+                    fields=[f for f in [name_field, "SoVI", "SoVI_class", "cluster"] if f in gdf.columns],
+                    aliases=[a for f, a in zip(
+                        [name_field, "SoVI", "SoVI_class", "cluster"],
+                        ["Name:", "SoVI Score:", "SoVI Class:", "LISA Cluster:"]
+                    ) if f in gdf.columns],
+                    localize=True,
+                ),
+                show=True,
+            ).add_to(m)
+
+            if output_view == "SoVI Score":
+                base_colormap.add_to(m)
+
+        # --- Individual variable layer (lighter color scale, so it reads as a secondary layer) ---
+        if show_var_layer:
+            var_colormap = cm.LinearColormap(
+                colors=["#f7fbff", "#6baed6", "#08306b"],  # light blue (low) -> dark blue (high), lighter overall than SoVI's red/green
+                vmin=gdf[selected_var].min(),
+                vmax=gdf[selected_var].max(),
+                caption=VARIABLE_LABELS.get(selected_var, selected_var)
             )
-            style_fn = lambda feature, cmap=base_colormap: {
-                "fillColor": cmap(feature["properties"]["SoVI"]),
-                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
-            }
-            base_layer_name = "SoVI Score"
+            folium.GeoJson(
+                gdf_json,
+                name=f"{VARIABLE_LABELS.get(selected_var, selected_var)} ({selected_var})",
+                style_function=lambda feature, cmap=var_colormap, var=selected_var: {
+                    "fillColor": cmap(feature["properties"][var]),
+                    "color": "#555555",
+                    "weight": 0.5,
+                    "fillOpacity": 0.55,  # lighter/more transparent than the SoVI layer
+                },
+                tooltip=folium.GeoJsonTooltip(
+                    fields=[name_field, selected_var, "SoVI"],
+                    aliases=["Name:", f"{VARIABLE_LABELS.get(selected_var, selected_var)}:", "SoVI Score:"],
+                    localize=True,
+                ),
+                show=True,
+            ).add_to(m)
+            var_colormap.add_to(m)
 
-        elif output_view == "SoVI Class":
-            class_colors = {
-                "< -1 SD": "#1a9850", "-1 to -0.5 SD": "#a6d96a", "-0.5 to 0.5 SD": "#ffffbf",
-                "0.5 to 1 SD": "#fdae61", "> 1 SD": "#d73027",
-            }
-            style_fn = lambda feature: {
-                "fillColor": class_colors.get(feature["properties"].get("SoVI_class"), "#cccccc"),
-                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
-            }
-            base_layer_name = "SoVI Class"
+        folium.LayerControl(collapsed=False).add_to(m)
 
-        else:  # LISA Cluster
-            cluster_colors = {
-                "High-High": "#d73027", "Low-Low": "#4575b4", "High-Low": "#fee090",
-                "Low-High": "#91bfdb", "Not Significant": "#cccccc",
-            }
-            style_fn = lambda feature: {
-                "fillColor": cluster_colors.get(feature["properties"].get("cluster"), "#cccccc"),
-                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
-            }
-            base_layer_name = "LISA Cluster"
+        st_folium(m, use_container_width=True, height=600, key="explorer_map")
 
-        folium.GeoJson(
-            gdf_json,
-            name=base_layer_name,
-            style_function=style_fn,
-            tooltip=folium.GeoJsonTooltip(
-                fields=[f for f in [name_field, "SoVI", "SoVI_class", "cluster"] if f in gdf.columns],
-                aliases=[a for f, a in zip(
-                    [name_field, "SoVI", "SoVI_class", "cluster"],
-                    ["Name:", "SoVI Score:", "SoVI Class:", "LISA Cluster:"]
-                ) if f in gdf.columns],
-                localize=True,
-            ),
-            show=True,
-        ).add_to(m)
-
-        if output_view == "SoVI Score":
-            base_colormap.add_to(m)
-
-    # --- Individual variable layer (lighter color scale, so it reads as a secondary layer) ---
-    if show_var_layer:
-        var_colormap = cm.LinearColormap(
-            colors=["#f7fbff", "#6baed6", "#08306b"],  # light blue (low) -> dark blue (high), lighter overall than SoVI's red/green
-            vmin=gdf[selected_var].min(),
-            vmax=gdf[selected_var].max(),
-            caption=VARIABLE_LABELS.get(selected_var, selected_var)
+        # Quick summary of the selected variable alongside SoVI, for direct comparison
+        st.markdown(f"**{VARIABLE_LABELS.get(selected_var, selected_var)} vs. SoVI — top 10 tracts/counties by this variable**")
+        compare_cols = [c for c in [name_field, selected_var, "SoVI", "SoVI_class"] if c in gdf.columns]
+        st.dataframe(
+            gdf[compare_cols].sort_values(selected_var, ascending=False).head(10).reset_index(drop=True),
+            use_container_width=True, hide_index=True
         )
-        folium.GeoJson(
-            gdf_json,
-            name=f"{VARIABLE_LABELS.get(selected_var, selected_var)} ({selected_var})",
-            style_function=lambda feature, cmap=var_colormap, var=selected_var: {
-                "fillColor": cmap(feature["properties"][var]),
-                "color": "#555555",
-                "weight": 0.5,
-                "fillOpacity": 0.55,  # lighter/more transparent than the SoVI layer
-            },
-            tooltip=folium.GeoJsonTooltip(
-                fields=[name_field, selected_var, "SoVI"],
-                aliases=["Name:", f"{VARIABLE_LABELS.get(selected_var, selected_var)}:", "SoVI Score:"],
-                localize=True,
-            ),
-            show=True,
-        ).add_to(m)
-        var_colormap.add_to(m)
-
-    folium.LayerControl(collapsed=False).add_to(m)
-
-    st_folium(m, use_container_width=True, height=600)
-
-    # Quick summary of the selected variable alongside SoVI, for direct comparison
-    st.markdown(f"**{VARIABLE_LABELS.get(selected_var, selected_var)} vs. SoVI — top 10 tracts/counties by this variable**")
-    compare_cols = [c for c in [name_field, selected_var, "SoVI", "SoVI_class"] if c in gdf.columns]
-    st.dataframe(
-        gdf[compare_cols].sort_values(selected_var, ascending=False).head(10).reset_index(drop=True),
-        use_container_width=True, hide_index=True
-    )
 
 # ==========================================
 # WILDFIRE RISK & FEMA SVI COMPARISON
@@ -461,50 +470,53 @@ else:
 
     # Quadrant map (High/Low Vulnerability x High/Low Wildfire Risk)
     if "quadrant" in gdf.columns:
-        quadrant_colors = {
-            "High Vulnerability & High Wildfire Risk": "#d73027",
-            "High Vulnerability & Low Wildfire Risk": "#fee090",
-            "Low Vulnerability & High Wildfire Risk": "#91bfdb",
-            "Low Vulnerability & Low Wildfire Risk": "#4575b4",
-        }
+        load_quad_map = st.button("Load Quadrant Map", key="load_quadrant")
 
-        m_quad = folium.Map(location=[43.0, -107.5], zoom_start=7, tiles="OpenStreetMap")
-        gdf_json_quad = gdf.reset_index().to_json()
+        if load_quad_map:
+            quadrant_colors = {
+                "High Vulnerability & High Wildfire Risk": "#d73027",
+                "High Vulnerability & Low Wildfire Risk": "#fee090",
+                "Low Vulnerability & High Wildfire Risk": "#91bfdb",
+                "Low Vulnerability & Low Wildfire Risk": "#4575b4",
+            }
 
-        folium.GeoJson(
-            gdf_json_quad,
-            name="Vulnerability-Wildfire Quadrant",
-            style_function=lambda feature: {
-                "fillColor": quadrant_colors.get(feature["properties"].get("quadrant"), "#cccccc"),
-                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
-            },
-            tooltip=folium.GeoJsonTooltip(
-                fields=[f for f in [name_field, "SoVI", "WFIR_RISKS", "SOVI_SCORE", "quadrant"] if f in gdf.columns],
-                aliases=["Name:", "Your SoVI:", "Wildfire Risk:", "FEMA SVI:", "Quadrant:"],
-                localize=True,
-            ),
-        ).add_to(m_quad)
+            m_quad = folium.Map(location=[43.0, -107.5], zoom_start=7, tiles="OpenStreetMap")
+            gdf_json_quad = gdf_to_geojson_str(selected_path, gdf)
 
-        # Simple legend
-        legend_html = """
-        <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
-                    background: white; padding: 10px; border: 1px solid #999; font-size: 13px;">
-        <b>Quadrant</b><br>
-        <span style="color:#d73027;">&#9632;</span> High Vulnerability & High Wildfire Risk<br>
-        <span style="color:#fee090;">&#9632;</span> High Vulnerability & Low Wildfire Risk<br>
-        <span style="color:#91bfdb;">&#9632;</span> Low Vulnerability & High Wildfire Risk<br>
-        <span style="color:#4575b4;">&#9632;</span> Low Vulnerability & Low Wildfire Risk
-        </div>
-        """
-        m_quad.get_root().html.add_child(folium.Element(legend_html))
+            folium.GeoJson(
+                gdf_json_quad,
+                name="Vulnerability-Wildfire Quadrant",
+                style_function=lambda feature: {
+                    "fillColor": quadrant_colors.get(feature["properties"].get("quadrant"), "#cccccc"),
+                    "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+                },
+                tooltip=folium.GeoJsonTooltip(
+                    fields=[f for f in [name_field, "SoVI", "WFIR_RISKS", "SOVI_SCORE", "quadrant"] if f in gdf.columns],
+                    aliases=["Name:", "Your SoVI:", "Wildfire Risk:", "FEMA SVI:", "Quadrant:"],
+                    localize=True,
+                ),
+            ).add_to(m_quad)
 
-        st_folium(m_quad, use_container_width=True, height=550, key="quadrant_map")
+            # Simple legend
+            legend_html = """
+            <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+                        background: white; padding: 10px; border: 1px solid #999; font-size: 13px;">
+            <b>Quadrant</b><br>
+            <span style="color:#d73027;">&#9632;</span> High Vulnerability & High Wildfire Risk<br>
+            <span style="color:#fee090;">&#9632;</span> High Vulnerability & Low Wildfire Risk<br>
+            <span style="color:#91bfdb;">&#9632;</span> Low Vulnerability & High Wildfire Risk<br>
+            <span style="color:#4575b4;">&#9632;</span> Low Vulnerability & Low Wildfire Risk
+            </div>
+            """
+            m_quad.get_root().html.add_child(folium.Element(legend_html))
 
-        # Quadrant breakdown table
-        quad_counts = gdf["quadrant"].value_counts().reset_index()
-        quad_counts.columns = ["Quadrant", "Count"]
-        quad_counts["Percent"] = round(100 * quad_counts["Count"] / quad_counts["Count"].sum(), 1)
-        st.dataframe(quad_counts, use_container_width=True, hide_index=True)
+            st_folium(m_quad, use_container_width=True, height=550, key="quadrant_map")
+
+            # Quadrant breakdown table
+            quad_counts = gdf["quadrant"].value_counts().reset_index()
+            quad_counts.columns = ["Quadrant", "Count"]
+            quad_counts["Percent"] = round(100 * quad_counts["Count"] / quad_counts["Count"].sum(), 1)
+            st.dataframe(quad_counts, use_container_width=True, hide_index=True)
 
 # ==========================================
 # SUMMARY STATS
