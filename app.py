@@ -98,7 +98,15 @@ VARIABLE_LABELS = {
     "FARM_VAL": "Farm production & land value per sq. mile",
     "NURS_PC": "% Population in nursing facilities",
     "PHYS_PC": "Physicians per 100,000 population",
+    # Comparison variables (from FEMA National Risk Index) - not PCA inputs,
+    # attached separately for benchmarking against your SoVI results
+    "WFIR_RISKS": "Wildfire Risk Score (FEMA NRI)",
+    "SOVI_SCORE": "Social Vulnerability Score (FEMA / CDC-ATSDR)",
 }
+
+# Comparison variables available on top of the PCA-input variables, once the
+# wildfire/FEMA-SVI comparison data has been attached to a GeoJSON.
+COMPARISON_VARS = ["WFIR_RISKS", "SOVI_SCORE"]
 
 # ------------------------------------------
 # Hardcoded variable lists per configuration. This is more reliable than
@@ -296,7 +304,7 @@ st.markdown(
     f"each layer on or off."
 )
 
-available_vars = [v for v in input_vars if v in gdf.columns]
+available_vars = [v for v in input_vars + COMPARISON_VARS if v in gdf.columns]
 missing_vars = [v for v in input_vars if v not in gdf.columns]
 
 if missing_vars:
@@ -420,6 +428,83 @@ else:
         gdf[compare_cols].sort_values(selected_var, ascending=False).head(10).reset_index(drop=True),
         use_container_width=True, hide_index=True
     )
+
+# ==========================================
+# WILDFIRE RISK & FEMA SVI COMPARISON
+# Benchmarks this SoVI configuration against FEMA's National Risk Index
+# wildfire risk score and its CDC/ATSDR-based social vulnerability score.
+# ==========================================
+st.markdown("---")
+st.subheader("Wildfire Risk & FEMA SVI Comparison")
+
+if "WFIR_RISKS" not in gdf.columns or "SOVI_SCORE" not in gdf.columns:
+    st.warning(
+        "Wildfire risk and FEMA SVI comparison data aren't attached to this "
+        "configuration's file yet. Re-export from R with the FEMA NRI join "
+        "to enable this section."
+    )
+else:
+    st.markdown(
+        "Comparing this model's SoVI score against FEMA's National Risk Index (NRI) "
+        "**wildfire risk score** and its own **social vulnerability score** "
+        "(based on the CDC/ATSDR methodology), for the same tracts/counties."
+    )
+
+    # Live correlation stats (computed from the currently loaded data)
+    valid = gdf.dropna(subset=["SoVI", "WFIR_RISKS", "SOVI_SCORE"])
+    corr_wildfire = valid["SoVI"].corr(valid["WFIR_RISKS"])
+    corr_fema_svi = valid["SoVI"].corr(valid["SOVI_SCORE"])
+
+    c1, c2 = st.columns(2)
+    c1.metric("Correlation: Your SoVI vs. Wildfire Risk", round(corr_wildfire, 3))
+    c2.metric("Correlation: Your SoVI vs. FEMA/CDC-ATSDR SVI", round(corr_fema_svi, 3))
+
+    # Quadrant map (High/Low Vulnerability x High/Low Wildfire Risk)
+    if "quadrant" in gdf.columns:
+        quadrant_colors = {
+            "High Vulnerability & High Wildfire Risk": "#d73027",
+            "High Vulnerability & Low Wildfire Risk": "#fee090",
+            "Low Vulnerability & High Wildfire Risk": "#91bfdb",
+            "Low Vulnerability & Low Wildfire Risk": "#4575b4",
+        }
+
+        m_quad = folium.Map(location=[43.0, -107.5], zoom_start=7, tiles="OpenStreetMap")
+        gdf_json_quad = gdf.reset_index().to_json()
+
+        folium.GeoJson(
+            gdf_json_quad,
+            name="Vulnerability-Wildfire Quadrant",
+            style_function=lambda feature: {
+                "fillColor": quadrant_colors.get(feature["properties"].get("quadrant"), "#cccccc"),
+                "color": "black", "weight": 0.5, "fillOpacity": 0.75,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=[f for f in [name_field, "SoVI", "WFIR_RISKS", "SOVI_SCORE", "quadrant"] if f in gdf.columns],
+                aliases=["Name:", "Your SoVI:", "Wildfire Risk:", "FEMA SVI:", "Quadrant:"],
+                localize=True,
+            ),
+        ).add_to(m_quad)
+
+        # Simple legend
+        legend_html = """
+        <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+                    background: white; padding: 10px; border: 1px solid #999; font-size: 13px;">
+        <b>Quadrant</b><br>
+        <span style="color:#d73027;">&#9632;</span> High Vulnerability & High Wildfire Risk<br>
+        <span style="color:#fee090;">&#9632;</span> High Vulnerability & Low Wildfire Risk<br>
+        <span style="color:#91bfdb;">&#9632;</span> Low Vulnerability & High Wildfire Risk<br>
+        <span style="color:#4575b4;">&#9632;</span> Low Vulnerability & Low Wildfire Risk
+        </div>
+        """
+        m_quad.get_root().html.add_child(folium.Element(legend_html))
+
+        st_folium(m_quad, use_container_width=True, height=550, key="quadrant_map")
+
+        # Quadrant breakdown table
+        quad_counts = gdf["quadrant"].value_counts().reset_index()
+        quad_counts.columns = ["Quadrant", "Count"]
+        quad_counts["Percent"] = round(100 * quad_counts["Count"] / quad_counts["Count"].sum(), 1)
+        st.dataframe(quad_counts, use_container_width=True, hide_index=True)
 
 # ==========================================
 # SUMMARY STATS
